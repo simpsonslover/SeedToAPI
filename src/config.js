@@ -2,37 +2,44 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-
-export const DEFAULT_CHAINS = {
-  ethereum: { chainId: 1, rpcUrl: 'https://ethereum-rpc.publicnode.com', symbol: 'ETH' },
-  base: { chainId: 8453, rpcUrl: 'https://mainnet.base.org', symbol: 'ETH' },
-  arbitrum: { chainId: 42161, rpcUrl: 'https://arb1.arbitrum.io/rpc', symbol: 'ETH' },
-  optimism: { chainId: 10, rpcUrl: 'https://mainnet.optimism.io', symbol: 'ETH' },
-  polygon: { chainId: 137, rpcUrl: 'https://polygon-bor-rpc.publicnode.com', symbol: 'POL' },
-  bsc: { chainId: 56, rpcUrl: 'https://bsc-rpc.publicnode.com', symbol: 'BNB' },
-  sepolia: { chainId: 11155111, rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com', symbol: 'ETH' },
-  'base-sepolia': { chainId: 84532, rpcUrl: 'https://sepolia.base.org', symbol: 'ETH' },
-};
+import { NETWORKS, FAMILIES } from './networks.js';
 
 export const DEFAULT_CONFIG = {
   host: '127.0.0.1',
   port: 8787,
   vaultPath: './data/vault.json',
-  defaultChain: 'sepolia',
-  // Standard Ethereum path (MetaMask, Ledger Live, etc). {index} is the account number.
-  derivationPath: "m/44'/60'/0'/0/{index}",
-  chains: DEFAULT_CHAINS,
+  // Used when a request leaves out "chain". If unset, requests must name a
+  // chain unless only one is enabled.
+  defaultChain: null,
+  chains: NETWORKS,
   policy: {
-    // If non-empty, transfers may only go to these addresses.
+    // If non-empty, transfers may only go to these addresses (any chain family).
     allowedRecipients: [],
-    // Allow POST /v1/transactions (arbitrary contract calls).
+    // Allow POST /v1/transactions (arbitrary contract calls / pre-built transactions).
     allowRawTransactions: true,
-    // Optional per-chain cap on native value per transaction, e.g. { "ethereum": "0.5" }.
+    // Optional per-chain cap on the native coin per transaction, e.g. { "bitcoin": "0.01", "ethereum": "0.5" }.
     maxNativeValuePerTx: {},
     // Highest account index the API will use.
     maxAccountIndex: 99,
   },
 };
+
+// Merge config.json "chains" over the built-in networks: override a field of a
+// known network (e.g. its rpcUrl) or add your own EVM chain.
+export function mergeChains(overrides = {}) {
+  const chains = { ...NETWORKS };
+  for (const [id, entry] of Object.entries(overrides)) {
+    const merged = { ...(NETWORKS[id] || { family: 'evm', decimals: 18, name: id }), ...entry };
+    if (NETWORKS[id]?.tokens || entry.tokens) merged.tokens = { ...(NETWORKS[id]?.tokens || {}), ...(entry.tokens || {}) };
+    if (!FAMILIES.includes(merged.family)) throw new Error(`chains.${id}.family must be one of ${FAMILIES.join(', ')}`);
+    if (merged.family === 'evm' && (!merged.rpcUrl || !Number.isInteger(merged.chainId))) {
+      throw new Error(`chains.${id} needs an rpcUrl and an integer chainId`);
+    }
+    merged.symbol ??= 'ETH';
+    chains[id] = merged;
+  }
+  return chains;
+}
 
 export function loadConfig({ path = process.env.SEEDTOAPI_CONFIG || './config.json', env = process.env } = {}) {
   let fileConfig = {};
@@ -43,8 +50,7 @@ export function loadConfig({ path = process.env.SEEDTOAPI_CONFIG || './config.js
   const config = {
     ...DEFAULT_CONFIG,
     ...fileConfig,
-    // A config file's chains are merged over the defaults, so you can override one RPC URL.
-    chains: { ...DEFAULT_CHAINS, ...(fileConfig.chains || {}) },
+    chains: mergeChains(fileConfig.chains),
     policy: { ...DEFAULT_CONFIG.policy, ...(fileConfig.policy || {}) },
   };
   if (env.SEEDTOAPI_HOST) config.host = env.SEEDTOAPI_HOST;

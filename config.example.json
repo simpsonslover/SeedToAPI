@@ -2,15 +2,16 @@
   "host": "127.0.0.1",
   "port": 8787,
   "vaultPath": "./data/vault.json",
-  "defaultChain": "base",
   "chains": {
-    "base": { "chainId": 8453, "rpcUrl": "https://mainnet.base.org", "symbol": "ETH" },
-    "ethereum": { "chainId": 1, "rpcUrl": "https://YOUR-RPC-PROVIDER/eth/YOUR-KEY", "symbol": "ETH" }
+    "ethereum": { "rpcUrl": "https://YOUR-RPC-PROVIDER/eth/YOUR-KEY" },
+    "solana": { "rpcUrl": "https://YOUR-SOLANA-RPC/?api-key=YOUR-KEY" },
+    "bitcoin": { "apiUrl": "https://mempool.space/api" },
+    "my-l2": { "family": "evm", "name": "My L2", "chainId": 123456, "rpcUrl": "https://rpc.example.org", "symbol": "ETH" }
   },
   "policy": {
     "allowedRecipients": [],
     "allowRawTransactions": true,
-    "maxNativeValuePerTx": { "ethereum": "0.5", "base": "0.5" },
+    "maxNativeValuePerTx": { "bitcoin": "0.01", "ethereum": "0.5", "solana": "10" },
     "maxAccountIndex": 99
   }
 }

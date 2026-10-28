@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import ganache from 'ganache';
 import solc from 'solc';
 import { ContractFactory, JsonRpcProvider, Wallet } from 'ethers';
-import { DEFAULT_CONFIG } from '../src/config.js';
+import { DEFAULT_CONFIG, mergeChains } from '../src/config.js';
 import { Keeper } from '../src/keeper.js';
 
 const MNEMONIC = 'test test test test test test test test test test test junk';
@@ -37,11 +37,10 @@ before(async () => {
   const config = {
     ...DEFAULT_CONFIG,
     vaultPath: join(dir, 'vault.json'),
-    defaultChain: 'local',
-    chains: { local: { chainId: 1337, rpcUrl, symbol: 'ETH' } },
+    chains: mergeChains({ local: { chainId: 1337, rpcUrl, symbol: 'ETH' } }),
   };
   keeper = await new Keeper({ config, kdf }).load();
-  await keeper.setup({ mnemonic: MNEMONIC, passphrase: 'a very long passphrase' });
+  await keeper.setup({ mnemonic: MNEMONIC, passphrase: 'a very long passphrase', chains: ['local'] });
 
   const deployer = Wallet.fromPhrase(MNEMONIC).connect(new JsonRpcProvider(rpcUrl, 1337, { staticNetwork: true, cacheTimeout: -1 }));
   const { TestToken, TestNFT } = compile();

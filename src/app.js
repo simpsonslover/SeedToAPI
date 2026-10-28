@@ -3,7 +3,8 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { ApiError, isRpcFailure } from './wallet.js';
+import { ApiError, catalog } from './wallet.js';
+import { isRpcFailure } from './chains/common.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -47,13 +48,16 @@ export function createApp(keeper, { log = console } = {}) {
 
   app.get('/status', (req, res) => res.json({ state: keeper.state }));
 
+  // Everything this server can handle, so you know what to pick at setup.
+  app.get('/coins', (req, res) => res.json({ coins: catalog(keeper.config.chains) }));
+
   app.post(
     '/setup',
     localOnly,
     wrap(async (req) => {
-      const { mnemonic, passphrase, bip39Passphrase } = req.body || {};
-      const result = await keeper.setup({ mnemonic, passphrase, bip39Passphrase });
-      log.info?.(`Wallet set up. Account 0 is ${result.firstAddress}`);
+      const { mnemonic, passphrase, bip39Passphrase, chains } = req.body || {};
+      const result = await keeper.setup({ mnemonic, passphrase, bip39Passphrase, chains });
+      log.info?.(`Wallet set up for: ${result.enabledChains.join(', ')}`);
       return {
         ...result,
         note: 'Save this API key now. It is not stored anywhere in readable form and cannot be shown again.',
@@ -90,11 +94,18 @@ export function createApp(keeper, { log = console } = {}) {
     wrap((req) => keeper.rotateApiKey(req.body?.passphrase)),
   );
 
+  v1.put(
+    '/chains',
+    localOnly,
+    wrap((req) => keeper.setEnabledChains(req.body?.enabled, req.body?.passphrase)),
+  );
+
   v1.use(unlocked);
   const w = () => keeper.wallet;
 
   v1.get('/chains', wrap(() => ({ chains: w().listChains() })));
-  v1.get('/accounts', wrap((req) => ({ accounts: w().listAccounts(req.query) })));
+  v1.get('/addresses', wrap((req) => w().addresses(req.query)));
+  v1.get('/accounts', wrap((req) => w().listAccounts(req.query)));
   v1.get('/balance', wrap((req) => w().balance(req.query)));
   v1.post('/transfer', wrap((req) => w().transfer(body(req))));
   v1.post('/nft/transfer', wrap((req) => w().transferNft(body(req))));

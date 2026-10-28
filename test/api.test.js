@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ganache from 'ganache';
 import { verifyMessage, JsonRpcProvider, parseEther, Wallet } from 'ethers';
-import { DEFAULT_CONFIG } from '../src/config.js';
+import { DEFAULT_CONFIG, mergeChains } from '../src/config.js';
 import { Keeper } from '../src/keeper.js';
 import { createApp } from '../src/app.js';
 
@@ -38,8 +38,7 @@ before(async () => {
   config = {
     ...DEFAULT_CONFIG,
     vaultPath: join(dir, 'vault.json'),
-    defaultChain: 'local',
-    chains: { local: { chainId: 1337, rpcUrl: `http://127.0.0.1:${chain.address().port}`, symbol: 'ETH' } },
+    chains: mergeChains({ local: { family: 'evm', chainId: 1337, rpcUrl: `http://127.0.0.1:${chain.address().port}`, symbol: 'ETH' } }),
     policy: { ...DEFAULT_CONFIG.policy, maxNativeValuePerTx: { local: '5' } },
   };
   server = await startApp(await new Keeper({ config, kdf }).load());
@@ -52,20 +51,34 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+test('lists supported coins publicly', async () => {
+  const res = await api('GET', '/coins', undefined, null);
+  assert.equal(res.status, 200);
+  const ids = res.body.coins.map((c) => c.id);
+  for (const id of ['bitcoin', 'ethereum', 'solana', 'litecoin', 'base', 'local']) assert.ok(ids.includes(id), id);
+  const btc = res.body.coins.find((c) => c.id === 'bitcoin');
+  assert.deepEqual(btc.aliases, ['btc']);
+  assert.ok(res.body.coins.find((c) => c.id === 'ethereum').tokens.includes('USDC'));
+});
+
 test('setup validates input and returns an API key once', async () => {
   assert.equal((await api('GET', '/status')).body.state, 'uninitialized');
-  assert.equal((await api('POST', '/setup', { mnemonic: 'not a seed', passphrase: PASSPHRASE })).status, 400);
-  assert.equal((await api('POST', '/setup', { mnemonic: MNEMONIC, passphrase: 'short' })).status, 400);
+  const good = { mnemonic: MNEMONIC, passphrase: PASSPHRASE, chains: ['local'] };
+  assert.equal((await api('POST', '/setup', { ...good, mnemonic: 'not a seed' })).status, 400);
+  assert.equal((await api('POST', '/setup', { ...good, passphrase: 'short' })).status, 400);
+  assert.equal((await api('POST', '/setup', { ...good, chains: [] })).status, 400);
+  assert.equal((await api('POST', '/setup', { ...good, chains: ['dogecoin'] })).status, 400);
 
-  const res = await api('POST', '/setup', { mnemonic: `  ${MNEMONIC.toUpperCase()} `, passphrase: PASSPHRASE });
+  const res = await api('POST', '/setup', { ...good, mnemonic: `  ${MNEMONIC.toUpperCase()} ` });
   assert.equal(res.status, 200);
   assert.match(res.body.apiKey, /^sk_/);
-  assert.equal(res.body.firstAddress, ACCOUNT0);
+  assert.deepEqual(res.body.enabledChains, ['local']);
+  assert.deepEqual(res.body.addresses, { local: ACCOUNT0 });
   apiKey = res.body.apiKey;
 
   const onDisk = await readFile(config.vaultPath, 'utf8');
   assert.ok(!onDisk.includes('junk') && !onDisk.includes(apiKey));
-  assert.equal((await api('POST', '/setup', { mnemonic: MNEMONIC, passphrase: PASSPHRASE })).status, 409);
+  assert.equal((await api('POST', '/setup', good)).status, 409);
 });
 
 test('API requires a valid key', async () => {
@@ -73,6 +86,7 @@ test('API requires a valid key', async () => {
   assert.equal((await api('GET', '/v1/accounts', undefined, 'sk_wrong')).status, 401);
   const res = await fetch(`${base}/v1/chains`, { headers: { 'x-api-key': apiKey } });
   assert.equal(res.status, 200);
+  assert.deepEqual((await res.json()).chains.map((c) => c.id), ['local']);
 });
 
 test('lists derived accounts', async () => {
@@ -124,6 +138,7 @@ test('rejects bad input and enforces policy', async () => {
   assert.equal((await api('POST', '/v1/transfer', { to: RECIPIENT, amount: '0' })).status, 400);
   assert.equal((await api('POST', '/v1/transfer', { to: RECIPIENT, amount: '6' })).status, 403);
   assert.equal((await api('POST', '/v1/transfer', { to: RECIPIENT, amount: '1', chain: 'nowhere' })).status, 400);
+  assert.equal((await api('POST', '/v1/transfer', { to: RECIPIENT, amount: '1', chain: 'ethereum' })).status, 403);
   assert.equal((await api('POST', '/v1/transfer', { to: RECIPIENT, amount: '1', account: 1000 })).status, 400);
   // Account 20 is unfunded, so the transfer would fail.
   assert.equal((await api('POST', '/v1/transfer', { to: RECIPIENT, amount: '1', account: 20, dryRun: true })).status, 422);
@@ -160,8 +175,32 @@ test('vault survives a restart', async () => {
   assert.equal(keeper.state, 'locked');
   assert.ok(keeper.checkApiKey(apiKey));
   await keeper.unlock(PASSPHRASE);
-  assert.equal(keeper.wallet.address(0), ACCOUNT0);
+  assert.equal(keeper.wallet.addresses().addresses.local, ACCOUNT0);
   keeper.lock();
+});
+
+test('picking chains after setup needs the passphrase', async () => {
+  assert.equal((await api('PUT', '/v1/chains', { enabled: ['local', 'btc', 'sol'] })).status, 400);
+  assert.equal((await api('PUT', '/v1/chains', { enabled: ['local', 'btc', 'sol'], passphrase: 'wrong passphrase' })).status, 401);
+  const res = await api('PUT', '/v1/chains', { enabled: ['local', 'btc', 'sol'], passphrase: PASSPHRASE });
+  assert.deepEqual(res.body.enabledChains, ['bitcoin', 'local', 'solana']);
+
+  const addrs = (await api('GET', '/v1/addresses')).body.addresses;
+  assert.equal(addrs.local, ACCOUNT0);
+  assert.match(addrs.bitcoin, /^bc1q/);
+  assert.match(addrs.solana, /^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+  // With several chains enabled, requests must say which one.
+  assert.equal((await api('GET', '/v1/balance')).status, 400);
+  assert.equal((await api('GET', '/v1/balance?chain=local')).status, 200);
+
+  // The choice survives a restart and can't be edited in the file.
+  const vault = JSON.parse(await readFile(config.vaultPath, 'utf8'));
+  assert.deepEqual(vault.settings.enabledChains, ['bitcoin', 'local', 'solana']);
+  const tampered = new Keeper({ config });
+  tampered.vault = { ...vault, settings: { enabledChains: ['bitcoin', 'ethereum', 'local', 'solana'] } };
+  await assert.rejects(tampered.unlock(PASSPHRASE), { status: 401 });
+
+  await api('PUT', '/v1/chains', { enabled: ['local'], passphrase: PASSPHRASE });
 });
 
 test('rotating the API key invalidates the old one', async () => {

@@ -43,16 +43,22 @@ export function generateApiKey() {
   return 'sk_' + randomBytes(32).toString('base64url');
 }
 
+// Data stored in the clear but authenticated by the passphrase: the API key
+// hash and the settings (enabled chains). Changing either breaks decryption.
+function associatedData(vault) {
+  return Buffer.from(vault.settings ? `${vault.apiKeyHash}\n${JSON.stringify(vault.settings)}` : vault.apiKeyHash, 'utf8');
+}
+
 /**
  * Encrypt a secret payload ({ mnemonic, bip39Passphrase }) into a vault object.
+ * settings must be JSON with a stable key order, e.g. { enabledChains: [...] }.
  */
-export async function sealVault({ secret, passphrase, apiKeyHash, kdf = DEFAULT_KDF }) {
+export async function sealVault({ secret, passphrase, apiKeyHash, settings, kdf = DEFAULT_KDF }) {
   const salt = randomBytes(16);
   const iv = randomBytes(12);
   const key = await deriveKey(passphrase, salt, kdf);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
-  // Bind the API key hash to the ciphertext so it cannot be swapped without the passphrase.
-  cipher.setAAD(Buffer.from(apiKeyHash, 'utf8'));
+  cipher.setAAD(associatedData({ apiKeyHash, settings }));
   const plaintext = Buffer.from(JSON.stringify(secret), 'utf8');
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -64,6 +70,7 @@ export async function sealVault({ secret, passphrase, apiKeyHash, kdf = DEFAULT_
     cipher: { name: 'aes-256-gcm', iv: iv.toString('base64'), tag: tag.toString('base64') },
     ciphertext: ciphertext.toString('base64'),
     apiKeyHash,
+    ...(settings && { settings }),
     createdAt: new Date().toISOString(),
   };
 }
@@ -78,7 +85,7 @@ export async function openVault(vault, passphrase) {
   const key = await deriveKey(passphrase, salt, vault.kdf);
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(vault.cipher.iv, 'base64'));
   decipher.setAuthTag(Buffer.from(vault.cipher.tag, 'base64'));
-  decipher.setAAD(Buffer.from(vault.apiKeyHash, 'utf8'));
+  decipher.setAAD(associatedData(vault));
   let plaintext;
   try {
     plaintext = Buffer.concat([decipher.update(Buffer.from(vault.ciphertext, 'base64')), decipher.final()]);

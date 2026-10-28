@@ -5,15 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SeedToAPI</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#5b6470; --border:#d9dde3; --accent:#2f6fed; --danger:#c62f2f; --ok:#1d7f46; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --card:#1a1e24; --text:#e6e9ee; --muted:#9aa3ae; --border:#2c323a; --accent:#5b8ff9; --danger:#ef6b6b; --ok:#4cc38a; } }
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#5b6470; --border:#d9dde3; --accent:#2f6fed; --danger:#c62f2f; --ok:#1d7f46; --chip:#eef2fb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --card:#1a1e24; --text:#e6e9ee; --muted:#9aa3ae; --border:#2c323a; --accent:#5b8ff9; --danger:#ef6b6b; --ok:#4cc38a; --chip:#222a38; } }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
-  main { max-width: 680px; margin: 0 auto; padding: 32px 16px 64px; }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
   h1 { font-size: 22px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin: 0 0 24px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px; margin-bottom:16px; }
   h2 { font-size: 16px; margin: 0 0 12px; }
+  h3 { font-size: 13px; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   label { display:block; font-weight:600; margin:12px 0 4px; font-size:13px; }
   input, textarea, select { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
   textarea { min-height: 84px; font-family: ui-monospace, Menlo, monospace; }
@@ -26,6 +27,17 @@
   .pill { display:inline-block; padding:2px 10px; border-radius:99px; font-size:12px; font-weight:600; border:1px solid var(--border); }
   .row { display:flex; gap:10px; flex-wrap:wrap; } .row > * { flex:1 1 180px; }
   pre { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; overflow:auto; font-size:13px; }
+  .coins { display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:8px; }
+  .coin { display:flex; gap:10px; align-items:flex-start; border:1px solid var(--border); border-radius:8px; padding:10px; cursor:pointer; font-weight:400; margin:0; }
+  .coin input { width:auto; margin:3px 0 0; accent-color: var(--accent); }
+  .coin:has(input:checked) { border-color: var(--accent); background: var(--chip); }
+  .coin strong { display:block; font-size:14px; }
+  .coin small { color: var(--muted); font-size:12px; }
+  table { width:100%; border-collapse: collapse; font-size:14px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--border); vertical-align: top; }
+  th { font-size:12px; color:var(--muted); font-weight:600; }
+  td code, .addr { font-family: ui-monospace, Menlo, monospace; font-size:12.5px; word-break: break-all; }
+  .scroll { overflow-x:auto; }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -40,6 +52,13 @@
     <form id="setupForm" autocomplete="off">
       <label for="mnemonic">Seed phrase (12 or 24 words)</label>
       <textarea id="mnemonic" spellcheck="false" autocapitalize="off" required></textarea>
+
+      <label>Pick your crypto</label>
+      <p class="hint">The API will only work on the coins you tick. You can change this later with your passphrase.</p>
+      <div id="pickMain" class="coins"></div>
+      <h3>Testnets (free coins for trying it out)</h3>
+      <div id="pickTest" class="coins"></div>
+
       <label for="passphrase">Encryption passphrase (min 12 characters)</label>
       <input id="passphrase" type="password" minlength="12" required>
       <label for="passphrase2">Confirm passphrase</label>
@@ -53,7 +72,8 @@
     <div id="apiKeyBox" hidden>
       <p><strong>Your API key.</strong> Copy it now. It won't be shown again.</p>
       <div id="apiKey" class="key"></div>
-      <p class="hint" id="firstAddr"></p>
+      <p class="hint">Your account 0 addresses. Check they match your existing wallet:</p>
+      <div id="setupAddrs" class="scroll"></div>
     </div>
   </section>
 
@@ -72,26 +92,53 @@
     <label for="key">API key</label>
     <input id="key" type="password" placeholder="sk_…">
     <div class="row">
-      <div><label for="chain">Chain</label><select id="chain"></select></div>
+      <div><label for="chain">Coin / network</label><select id="chain"></select></div>
       <div><label for="account">Account #</label><input id="account" type="number" min="0" value="0"></div>
     </div>
-    <button class="secondary" id="loadAccounts">List accounts</button>
+    <button class="secondary" id="loadAddrs">My addresses</button>
     <button class="secondary" id="loadBalance">Balance</button>
     <button class="secondary" id="lockBtn">Lock wallet</button>
     <h2 style="margin-top:20px">Send</h2>
     <div class="row">
-      <div><label for="to">To address</label><input id="to" placeholder="0x…"></div>
+      <div><label for="to">To address</label><input id="to" placeholder="Recipient address"></div>
       <div><label for="amount">Amount</label><input id="amount" placeholder="0.01"></div>
     </div>
-    <label for="token">ERC-20 token address (blank for the native coin)</label>
-    <input id="token" placeholder="0x…">
+    <div class="row">
+      <div id="tokenWrap"><label for="token">Token (blank for the coin itself)</label><input id="token" placeholder="USDC, or a contract / mint address"></div>
+      <div id="speedWrap" hidden><label for="speed">Fee speed</label>
+        <select id="speed"><option value="fast">Fast (~20 min)</option><option value="normal" selected>Normal (~1 hour)</option><option value="slow">Slow (~1 day)</option></select></div>
+    </div>
+    <p class="hint" id="tokenHint"></p>
     <button class="secondary" id="preview">Preview (dry run)</button>
     <button id="send">Send</button>
     <pre id="out">Results appear here.</pre>
+
+    <details style="margin-top:16px">
+      <summary><strong>Change which coins are enabled</strong></summary>
+      <div id="manageMain" class="coins" style="margin-top:12px"></div>
+      <h3>Testnets</h3>
+      <div id="manageTest" class="coins"></div>
+      <label for="managePass">Passphrase</label>
+      <input id="managePass" type="password">
+      <button class="secondary" id="saveChains">Save coins</button>
+      <div id="manageMsg" class="msg"></div>
+    </details>
+  </section>
+
+  <section class="card">
+    <details id="supported">
+      <summary><strong>Supported coins</strong></summary>
+      <div class="scroll" style="margin-top:12px"><table id="coinTable"></table></div>
+      <p class="hint">Any other ERC-20 / SPL token works by its contract or mint address. NFTs work on the EVM chains and Solana.</p>
+    </details>
   </section>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+let COINS = [];
+let ENABLED = [];
+
 async function call(method, path, body, apiKey) {
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
@@ -100,6 +147,24 @@ async function call(method, path, body, apiKey) {
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
 }
+
+function coinBoxes(container, name, checked = []) {
+  const testnet = container.id.endsWith('Test');
+  container.innerHTML = COINS.filter((c) => c.testnet === testnet).map((c) => `
+    <label class="coin"><input type="checkbox" name="${name}" value="${esc(c.id)}" ${checked.includes(c.id) ? 'checked' : ''}>
+      <span><strong>${esc(c.name)} <small>${esc(c.symbol)}</small></strong>
+      <small>${c.tokens.length ? 'Tokens: ' + esc(c.tokens.join(', ')) : c.family === 'bitcoin' ? 'Native coin only' : 'Any token by address'}</small></span>
+    </label>`).join('');
+}
+const picked = (name) => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((i) => i.value);
+
+function renderCoinTable() {
+  const fam = { evm: 'EVM', bitcoin: 'UTXO (SegWit)', solana: 'Solana' };
+  $('coinTable').innerHTML = '<tr><th>Network</th><th>Coin</th><th>Use as <code>chain</code></th><th>Built-in tokens</th></tr>' +
+    COINS.map((c) => `<tr><td>${esc(c.name)}${c.testnet ? ' <small class="hint">testnet</small>' : ''}<br><small class="hint">${fam[c.family]}</small></td>
+      <td>${esc(c.symbol)}</td><td><code>${esc([c.id, ...c.aliases].join(', '))}</code></td><td>${esc(c.tokens.join(', ') || '–')}</td></tr>`).join('');
+}
+
 async function refresh() {
   const { state } = await call('GET', '/status');
   $('state').textContent = state;
@@ -107,49 +172,96 @@ async function refresh() {
   $('unlock').hidden = state !== 'locked';
   $('console').hidden = state === 'uninitialized';
 }
+
+function renderAddresses(target, addresses) {
+  const name = (id) => COINS.find((c) => c.id === id)?.name || id;
+  target.innerHTML = '<table>' + Object.entries(addresses).map(([id, a]) => `<tr><td>${esc(name(id))}</td><td class="addr">${esc(a)}</td></tr>`).join('') + '</table>';
+}
+
 $('setupForm').onsubmit = async (e) => {
   e.preventDefault();
   const msg = $('setupMsg'); msg.className = 'msg'; msg.textContent = 'Encrypting…';
+  const chains = picked('pick');
+  if (!chains.length) { msg.className = 'msg err'; msg.textContent = 'Pick at least one coin'; return; }
   if ($('passphrase').value !== $('passphrase2').value) { msg.className = 'msg err'; msg.textContent = 'Passphrases do not match'; return; }
   try {
-    const r = await call('POST', '/setup', { mnemonic: $('mnemonic').value, passphrase: $('passphrase').value, bip39Passphrase: $('bip39').value });
+    const r = await call('POST', '/setup', { mnemonic: $('mnemonic').value, passphrase: $('passphrase').value, bip39Passphrase: $('bip39').value, chains });
     $('setupForm').reset(); $('setupForm').hidden = true;
     $('apiKeyBox').hidden = false; $('apiKey').textContent = r.apiKey; $('key').value = r.apiKey;
-    $('firstAddr').textContent = 'Account 0: ' + r.firstAddress + '. Check this matches your existing wallet.';
+    renderAddresses($('setupAddrs'), r.addresses);
     await refresh(); loadChains();
   } catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
 };
+
 $('unlockForm').onsubmit = async (e) => {
   e.preventDefault();
   const msg = $('unlockMsg'); msg.className = 'msg'; msg.textContent = 'Unlocking…';
-  try { await call('POST', '/unlock', { passphrase: $('unlockPass').value }); $('unlockForm').reset(); msg.textContent = ''; await refresh(); }
+  try { await call('POST', '/unlock', { passphrase: $('unlockPass').value }); $('unlockForm').reset(); msg.textContent = ''; await refresh(); loadChains(); }
   catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
 };
-const show = (p) => p.then((r) => { $('out').textContent = JSON.stringify(r, null, 2); }, (err) => { $('out').textContent = 'Error: ' + err.message; });
+
+const show = (p) => p.then((r) => { $('out').textContent = JSON.stringify(r, null, 2); return r; }, (err) => { $('out').textContent = 'Error: ' + err.message; });
 const key = () => $('key').value.trim();
+const current = () => COINS.find((c) => c.id === $('chain').value);
+
+function onChainChange() {
+  const c = current();
+  if (!c) return;
+  const btcLike = c.family === 'bitcoin';
+  $('tokenWrap').hidden = btcLike;
+  $('speedWrap').hidden = !btcLike;
+  $('tokenHint').textContent = btcLike ? '' : c.tokens.length ? `Built-in tokens on ${c.name}: ${c.tokens.join(', ')}` : '';
+  $('to').placeholder = c.family === 'evm' ? '0x…' : c.family === 'solana' ? 'Solana address' : `${c.name} address`;
+}
+
 async function loadChains() {
   if (!key()) return;
   try {
     const { chains } = await call('GET', '/v1/chains', null, key());
-    $('chain').innerHTML = chains.map((c) => `<option value="${c.name}" ${c.default ? 'selected' : ''}>${c.name} (${c.symbol})</option>`).join('');
+    ENABLED = chains.map((c) => c.id);
+    $('chain').innerHTML = chains.map((c) => `<option value="${esc(c.id)}">${esc(c.name)} (${esc(c.symbol)})</option>`).join('');
+    coinBoxes($('manageMain'), 'manage', ENABLED); coinBoxes($('manageTest'), 'manage', ENABLED);
+    onChainChange();
   } catch {}
 }
 $('key').onchange = loadChains;
-$('loadAccounts').onclick = () => show(call('GET', '/v1/accounts?count=5', null, key()));
+$('chain').onchange = onChainChange;
+$('loadAddrs').onclick = () => show(call('GET', '/v1/addresses?account=' + $('account').value, null, key()));
 $('loadBalance').onclick = () => {
   const q = new URLSearchParams({ chain: $('chain').value, account: $('account').value });
-  if ($('token').value.trim()) q.set('token', $('token').value.trim());
+  if (!$('tokenWrap').hidden && $('token').value.trim()) q.set('token', $('token').value.trim());
   show(call('GET', '/v1/balance?' + q, null, key()));
 };
-const transfer = (dryRun) => ({ chain: $('chain').value, account: Number($('account').value), to: $('to').value.trim(), amount: $('amount').value.trim(), token: $('token').value.trim() || undefined, dryRun });
+const transfer = (dryRun) => {
+  const t = { chain: $('chain').value, account: Number($('account').value), to: $('to').value.trim(), amount: $('amount').value.trim(), dryRun };
+  if (!$('tokenWrap').hidden && $('token').value.trim()) t.token = $('token').value.trim();
+  if (!$('speedWrap').hidden) t.speed = $('speed').value;
+  return t;
+};
 $('preview').onclick = () => show(call('POST', '/v1/transfer', transfer(true), key()));
 $('send').onclick = () => {
   const t = transfer(false);
-  if (!confirm(`Send ${t.amount} ${t.token ? 'tokens' : 'native coin'} on ${t.chain} to ${t.to}?`)) return;
+  const what = t.token || current()?.symbol || 'coins';
+  if (!confirm(`Send ${t.amount} ${what} on ${current()?.name} to ${t.to}?`)) return;
   show(call('POST', '/v1/transfer', t, key()));
 };
 $('lockBtn').onclick = () => show(call('POST', '/lock', null, key()).then(async (r) => { await refresh(); return r; }));
-refresh();
+$('saveChains').onclick = async () => {
+  const msg = $('manageMsg'); msg.className = 'msg'; msg.textContent = 'Saving…';
+  try {
+    const r = await call('PUT', '/v1/chains', { enabled: picked('manage'), passphrase: $('managePass').value }, key());
+    $('managePass').value = '';
+    msg.className = 'msg ok'; msg.textContent = 'Enabled: ' + r.enabledChains.join(', ');
+    loadChains();
+  } catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
+};
+
+(async () => {
+  COINS = (await call('GET', '/coins')).coins;
+  coinBoxes($('pickMain'), 'pick'); coinBoxes($('pickTest'), 'pick');
+  renderCoinTable();
+  await refresh();
+})();
 </script>
 </body>
 </html>

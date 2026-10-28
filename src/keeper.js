@@ -12,12 +12,11 @@ import {
   MIN_PASSPHRASE_LENGTH,
   WrongPassphraseError,
 } from './vault.js';
-import { WalletService, ApiError, isValidMnemonic, normalizeMnemonic } from './wallet.js';
+import { WalletService, ApiError, isValidMnemonic, normalizeMnemonic, resolveChainIds } from './wallet.js';
 
 export class Keeper {
-  constructor({ config, providerFactory, kdf } = {}) {
+  constructor({ config, kdf } = {}) {
     this.config = config;
-    this.providerFactory = providerFactory;
     this.kdf = kdf; // tests pass cheaper scrypt params
     this.vault = null;
     this.wallet = null;
@@ -34,25 +33,40 @@ export class Keeper {
     return this.wallet ? 'unlocked' : 'locked';
   }
 
+  // Chains picked at setup. Vaults from before chain picking enable every EVM chain.
+  get enabledChains() {
+    if (!this.vault) return [];
+    const picked = this.vault.settings?.enabledChains;
+    if (!picked) return Object.keys(this.config.chains).filter((id) => this.config.chains[id].family === 'evm');
+    return picked.filter((id) => this.config.chains[id]);
+  }
+
   checkApiKey(candidate) {
     return Boolean(this.vault) && apiKeyMatches(candidate, this.vault.apiKeyHash);
   }
 
-  async setup({ mnemonic, passphrase, bip39Passphrase = '' }) {
+  async setup({ mnemonic, passphrase, bip39Passphrase = '', chains }) {
     if (this.vault) throw new ApiError(409, 'A wallet is already set up. Delete the vault file to start over.');
     if (typeof mnemonic !== 'string' || !isValidMnemonic(mnemonic)) {
       throw new ApiError(400, 'mnemonic is not a valid BIP-39 seed phrase (check spelling and word count)');
     }
     validatePassphrase(passphrase);
     if (typeof bip39Passphrase !== 'string') throw new ApiError(400, 'bip39Passphrase must be a string');
+    const enabledChains = resolveChainIds(chains, this.config.chains);
 
     const apiKey = generateApiKey();
     const secret = { mnemonic: normalizeMnemonic(mnemonic), bip39Passphrase };
-    const vault = await sealVault({ secret, passphrase, apiKeyHash: hashApiKey(apiKey), ...(this.kdf && { kdf: this.kdf }) });
+    const vault = await sealVault({
+      secret,
+      passphrase,
+      apiKeyHash: hashApiKey(apiKey),
+      settings: { enabledChains },
+      ...(this.kdf && { kdf: this.kdf }),
+    });
     await writeVault(this.config.vaultPath, vault);
     this.vault = vault;
     this.#startWallet(secret);
-    return { apiKey, firstAddress: this.wallet.address(0) };
+    return { apiKey, enabledChains, ...this.wallet.addresses({ account: 0 }) };
   }
 
   async unlock(passphrase) {
@@ -81,7 +95,23 @@ export class Keeper {
   }
 
   async rotateApiKey(passphrase) {
+    const apiKey = generateApiKey();
+    await this.#reseal(passphrase, { apiKeyHash: hashApiKey(apiKey) });
+    return { apiKey };
+  }
+
+  // Changing which chains are enabled needs the passphrase, so a leaked API key
+  // can't widen what it can reach.
+  async setEnabledChains(chains, passphrase) {
+    const enabledChains = resolveChainIds(chains, this.config.chains);
+    await this.#reseal(passphrase, { settings: { ...(this.vault?.settings || {}), enabledChains } });
+    this.wallet?.setEnabledChains(enabledChains);
+    return { enabledChains };
+  }
+
+  async #reseal(passphrase, changes) {
     if (!this.vault) throw new ApiError(409, 'No wallet set up yet');
+    if (typeof passphrase !== 'string') throw new ApiError(400, 'passphrase is required');
     let secret;
     try {
       secret = await openVault(this.vault, passphrase);
@@ -89,11 +119,16 @@ export class Keeper {
       if (err instanceof WrongPassphraseError) throw new ApiError(401, 'Wrong passphrase');
       throw err;
     }
-    const apiKey = generateApiKey();
-    const vault = await sealVault({ secret, passphrase, apiKeyHash: hashApiKey(apiKey), kdf: pickKdf(this.vault.kdf) });
+    const { name, N, r, p, keyLen } = this.vault.kdf;
+    const vault = await sealVault({
+      secret,
+      passphrase,
+      apiKeyHash: changes.apiKeyHash ?? this.vault.apiKeyHash,
+      settings: changes.settings ?? this.vault.settings ?? { enabledChains: this.enabledChains },
+      kdf: { name, N, r, p, keyLen },
+    });
     await writeVault(this.config.vaultPath, vault);
     this.vault = vault;
-    return { apiKey };
   }
 
   #startWallet(secret) {
@@ -101,7 +136,7 @@ export class Keeper {
       mnemonic: secret.mnemonic,
       bip39Passphrase: secret.bip39Passphrase,
       config: this.config,
-      providerFactory: this.providerFactory,
+      enabledChains: this.enabledChains,
     });
   }
 }
@@ -110,8 +145,4 @@ function validatePassphrase(passphrase) {
   if (typeof passphrase !== 'string' || passphrase.length < MIN_PASSPHRASE_LENGTH) {
     throw new ApiError(400, `passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters; it encrypts your seed on disk`);
   }
-}
-
-function pickKdf({ name, N, r, p, keyLen }) {
-  return { name, N, r, p, keyLen };
 }

@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { loadConfig } from './config.js';
 import { Keeper } from './keeper.js';
+import { catalog } from './wallet.js';
 
 // One readline for the whole session so piped input isn't lost between questions.
 let muted = false;
@@ -47,11 +48,23 @@ if (passphrase !== confirm) {
 }
 const bip39Passphrase = await ask('BIP-39 passphrase / "25th word" (blank if none, hidden): ', { hidden: true });
 
+const coins = catalog(config.chains);
+console.log('\nSupported coins:');
+coins.forEach((c, n) => {
+  const extras = [c.tokens.length && `tokens: ${c.tokens.join(', ')}`, c.testnet && 'testnet'].filter(Boolean).join('; ');
+  console.log(`  ${String(n + 1).padStart(2)}. ${c.id.padEnd(16)} ${c.name} (${c.symbol})${extras ? `  [${extras}]` : ''}`);
+});
+const picked = (await ask('\nWhich do you want? Names or numbers, comma-separated (e.g. btc, eth, sol): '))
+  .split(',')
+  .map((x) => x.trim())
+  .filter(Boolean)
+  .map((x) => (/^\d+$/.test(x) ? coins[Number(x) - 1]?.id ?? x : x));
+
 try {
-  const { apiKey, firstAddress } = await keeper.setup({ mnemonic, passphrase, bip39Passphrase });
+  const { apiKey, addresses } = await keeper.setup({ mnemonic, passphrase, bip39Passphrase, chains: picked });
   keeper.lock();
-  console.log('\nWallet saved.');
-  console.log(`Account 0 address: ${firstAddress}  (check it matches your wallet)`);
+  console.log('\nWallet saved. Account 0 addresses (check they match your wallet):');
+  for (const [id, address] of Object.entries(addresses)) console.log(`  ${id.padEnd(16)} ${address}`);
   console.log(`\nAPI key (shown once, store it somewhere safe):\n\n  ${apiKey}\n`);
   console.log('Start the server with: npm start');
 } catch (err) {
