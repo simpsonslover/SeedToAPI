@@ -1,0 +1,27 @@
+{
+  "name": "seedtoapi",
+  "version": "0.1.0",
+  "description": "Self-hosted HTTP API for an EVM wallet derived from your own BIP-39 seed phrase",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": {
+    "seedtoapi": "src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "setup": "node src/setup-cli.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "6.17.0",
+    "express": "5.1.0"
+  },
+  "devDependencies": {
+    "ganache": "7.9.2",
+    "solc": "0.8.38"
+  }
+}

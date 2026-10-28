@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SeedToAPI</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#5b6470; --border:#d9dde3; --accent:#2f6fed; --danger:#c62f2f; --ok:#1d7f46; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --card:#1a1e24; --text:#e6e9ee; --muted:#9aa3ae; --border:#2c323a; --accent:#5b8ff9; --danger:#ef6b6b; --ok:#4cc38a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px; margin-bottom:16px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  label { display:block; font-weight:600; margin:12px 0 4px; font-size:13px; }
+  input, textarea, select { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
+  textarea { min-height: 84px; font-family: ui-monospace, Menlo, monospace; }
+  button { margin-top:14px; padding:9px 16px; border:0; border-radius:6px; background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+  button.secondary { background: transparent; color: var(--text); border:1px solid var(--border); }
+  .hint { color:var(--muted); font-size:13px; margin:4px 0 0; }
+  .msg { margin-top:12px; font-size:14px; white-space:pre-wrap; word-break:break-all; }
+  .msg.err { color: var(--danger); } .msg.ok { color: var(--ok); }
+  .key { font-family: ui-monospace, Menlo, monospace; background:var(--bg); border:1px dashed var(--accent); padding:10px; border-radius:6px; word-break:break-all; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:99px; font-size:12px; font-weight:600; border:1px solid var(--border); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; } .row > * { flex:1 1 180px; }
+  pre { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; overflow:auto; font-size:13px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>SeedToAPI</h1>
+  <p class="sub">Self-hosted wallet API. Status: <span id="state" class="pill">…</span></p>
+
+  <section id="setup" class="card" hidden>
+    <h2>Set up your wallet</h2>
+    <p class="hint">Your seed is encrypted with your passphrase and saved on this machine only. Only use this page on the machine running the server.</p>
+    <form id="setupForm" autocomplete="off">
+      <label for="mnemonic">Seed phrase (12 or 24 words)</label>
+      <textarea id="mnemonic" spellcheck="false" autocapitalize="off" required></textarea>
+      <label for="passphrase">Encryption passphrase (min 12 characters)</label>
+      <input id="passphrase" type="password" minlength="12" required>
+      <label for="passphrase2">Confirm passphrase</label>
+      <input id="passphrase2" type="password" minlength="12" required>
+      <label for="bip39">BIP-39 passphrase / "25th word" (optional)</label>
+      <input id="bip39" type="password">
+      <p class="hint">Leave blank unless your wallet uses one. It changes which addresses the seed produces.</p>
+      <button type="submit">Encrypt and save</button>
+      <div id="setupMsg" class="msg"></div>
+    </form>
+    <div id="apiKeyBox" hidden>
+      <p><strong>Your API key.</strong> Copy it now. It won't be shown again.</p>
+      <div id="apiKey" class="key"></div>
+      <p class="hint" id="firstAddr"></p>
+    </div>
+  </section>
+
+  <section id="unlock" class="card" hidden>
+    <h2>Unlock</h2>
+    <form id="unlockForm">
+      <label for="unlockPass">Passphrase</label>
+      <input id="unlockPass" type="password" required>
+      <button type="submit">Unlock</button>
+      <div id="unlockMsg" class="msg"></div>
+    </form>
+  </section>
+
+  <section id="console" class="card" hidden>
+    <h2>Try the API</h2>
+    <label for="key">API key</label>
+    <input id="key" type="password" placeholder="sk_…">
+    <div class="row">
+      <div><label for="chain">Chain</label><select id="chain"></select></div>
+      <div><label for="account">Account #</label><input id="account" type="number" min="0" value="0"></div>
+    </div>
+    <button class="secondary" id="loadAccounts">List accounts</button>
+    <button class="secondary" id="loadBalance">Balance</button>
+    <button class="secondary" id="lockBtn">Lock wallet</button>
+    <h2 style="margin-top:20px">Send</h2>
+    <div class="row">
+      <div><label for="to">To address</label><input id="to" placeholder="0x…"></div>
+      <div><label for="amount">Amount</label><input id="amount" placeholder="0.01"></div>
+    </div>
+    <label for="token">ERC-20 token address (blank for the native coin)</label>
+    <input id="token" placeholder="0x…">
+    <button class="secondary" id="preview">Preview (dry run)</button>
+    <button id="send">Send</button>
+    <pre id="out">Results appear here.</pre>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+async function call(method, path, body, apiKey) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+async function refresh() {
+  const { state } = await call('GET', '/status');
+  $('state').textContent = state;
+  $('setup').hidden = state !== 'uninitialized' && $('apiKeyBox').hidden;
+  $('unlock').hidden = state !== 'locked';
+  $('console').hidden = state === 'uninitialized';
+}
+$('setupForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = $('setupMsg'); msg.className = 'msg'; msg.textContent = 'Encrypting…';
+  if ($('passphrase').value !== $('passphrase2').value) { msg.className = 'msg err'; msg.textContent = 'Passphrases do not match'; return; }
+  try {
+    const r = await call('POST', '/setup', { mnemonic: $('mnemonic').value, passphrase: $('passphrase').value, bip39Passphrase: $('bip39').value });
+    $('setupForm').reset(); $('setupForm').hidden = true;
+    $('apiKeyBox').hidden = false; $('apiKey').textContent = r.apiKey; $('key').value = r.apiKey;
+    $('firstAddr').textContent = 'Account 0: ' + r.firstAddress + '. Check this matches your existing wallet.';
+    await refresh(); loadChains();
+  } catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
+};
+$('unlockForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = $('unlockMsg'); msg.className = 'msg'; msg.textContent = 'Unlocking…';
+  try { await call('POST', '/unlock', { passphrase: $('unlockPass').value }); $('unlockForm').reset(); msg.textContent = ''; await refresh(); }
+  catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
+};
+const show = (p) => p.then((r) => { $('out').textContent = JSON.stringify(r, null, 2); }, (err) => { $('out').textContent = 'Error: ' + err.message; });
+const key = () => $('key').value.trim();
+async function loadChains() {
+  if (!key()) return;
+  try {
+    const { chains } = await call('GET', '/v1/chains', null, key());
+    $('chain').innerHTML = chains.map((c) => `<option value="${c.name}" ${c.default ? 'selected' : ''}>${c.name} (${c.symbol})</option>`).join('');
+  } catch {}
+}
+$('key').onchange = loadChains;
+$('loadAccounts').onclick = () => show(call('GET', '/v1/accounts?count=5', null, key()));
+$('loadBalance').onclick = () => {
+  const q = new URLSearchParams({ chain: $('chain').value, account: $('account').value });
+  if ($('token').value.trim()) q.set('token', $('token').value.trim());
+  show(call('GET', '/v1/balance?' + q, null, key()));
+};
+const transfer = (dryRun) => ({ chain: $('chain').value, account: Number($('account').value), to: $('to').value.trim(), amount: $('amount').value.trim(), token: $('token').value.trim() || undefined, dryRun });
+$('preview').onclick = () => show(call('POST', '/v1/transfer', transfer(true), key()));
+$('send').onclick = () => {
+  const t = transfer(false);
+  if (!confirm(`Send ${t.amount} ${t.token ? 'tokens' : 'native coin'} on ${t.chain} to ${t.to}?`)) return;
+  show(call('POST', '/v1/transfer', t, key()));
+};
+$('lockBtn').onclick = () => show(call('POST', '/lock', null, key()).then(async (r) => { await refresh(); return r; }));
+refresh();
+</script>
+</body>
+</html>
